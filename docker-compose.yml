@@ -2,11 +2,12 @@ version: '3.8'
 
 
 services:
-  postgresDB:
-    image: postgres
+  db:
+    image: postgres:17.2
+    container_name: postgres_container
     environment:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "postgres"
-      POSTGRES_DB: "status-check"
+      POSTGRES_DB: "status-check-db"
     ports:
       - "5432:5432"
