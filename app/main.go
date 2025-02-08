@@ -7,59 +7,91 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 )
 
 type PingResult struct {
-	Service            string    `json:"service"`
-	IPAddress          string    `json:"ip_address"`
-	PingDuration       float64   `json:"ping_duration"`
-	Status             string    `json:"status"`
-	LastSuccessfulPing time.Time `json:"last_successful_ping"`
+	ContainerID   string  `json:"container_id"`
+	ContainerName string  `json:"container_name"`
+	PingDuration  float64 `json:"ping_duration"`
+	Status        string  `json:"status"`
+	Service       string  `json:"service"`
 }
 
-func extractIPAddress(url string) string {
-	parts := strings.Split(url, "//")
-	if len(parts) > 1 {
-		host := strings.Split(parts[1], ":")[0]
-		return host
+// ID этого контейнера
+func getCurrentContainerID() string {
+	return os.Getenv("HOSTNAME")
+}
+
+// ID всех остальных контейнеров в vk_default сетке.
+func discoverContainers() ([]struct {
+	ID   string
+	Name string
+}, error) {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	return "unknown"
+	defer cli.Close()
+
+	// фильтр по сетке
+	filter := filters.NewArgs()
+	filter.Add("network", "vk_default")
+
+	// контейнеры по фильтру
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		Filters: filter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	var containerList []struct {
+		ID   string
+		Name string
+	}
+	for _, container := range containers {
+		containerID := container.ID
+		containerName := strings.TrimPrefix(container.Names[0], "/")
+		containerList = append(containerList, struct {
+			ID   string
+			Name string
+		}{
+			ID:   containerID,
+			Name: containerName,
+		})
+	}
+	return containerList, nil
 }
 
-func ping(url string, serviceName string) PingResult {
+// пинг через доекровские cli команды
+func pingService(containerID, serviceName string) PingResult {
 	startTime := time.Now()
-	client := http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url)
-	duration := time.Since(startTime).Seconds()
+	thisID := getCurrentContainerID()
 
+	cmd := exec.Command("docker", "exec", "-t", thisID, "ping", "-c", "1", serviceName)
+	err := cmd.Run()
+	duration := time.Since(startTime).Seconds()
 	result := PingResult{
-		Service:      serviceName,
-		IPAddress:    extractIPAddress(url),
+		ContainerID:  containerID,
 		PingDuration: duration,
 		Status:       "DOWN",
+		Service:      serviceName,
 	}
-
 	if err != nil {
-		log.Printf("Error pinging %s: %v", url, err)
+		log.Printf("Error pinging service %s from container %s: %v", serviceName, thisID, err)
 		return result
 	}
-	defer resp.Body.Close()
-
-	log.Printf("Response from %s: %d", url, resp.StatusCode)
-
-	if resp.StatusCode == http.StatusOK {
-		result.Status = "UP"
-		result.LastSuccessfulPing = time.Now()
-	} else {
-		log.Printf("Unexpected status code from %s: %d", url, resp.StatusCode)
-	}
-
+	result.Status = "UP"
 	return result
 }
 
@@ -71,111 +103,53 @@ func sendPingResult(apiURL string, result PingResult) {
 		return
 	}
 	defer resp.Body.Close()
-	fmt.Printf("Sent ping result for %s: %s\n", result.Service, result.Status)
+	fmt.Printf("Sent ping result for %s: %s\n %s\n", result.Service, result.Status, result.ContainerID)
 }
 
-// Используем докерскую библиотеку для поиска контейнеров в нашей сети (от docker-compose)
-func discoverContainers() ([]struct {
-	URL         string
-	ServiceName string
-}, error) {
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+func pingAllContainers(apiURL string, pingedContainers map[string]bool, mutex *sync.Mutex) {
+	containers, err := discoverContainers()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Docker client: %w", err)
-	}
-	defer cli.Close()
-
-	containers, err := cli.ContainerList(ctx, container.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list containers: %w", err)
-	}
-
-	var services []struct {
-		URL         string
-		ServiceName string
-	}
-
-	for _, container := range containers {
-		containerName := strings.TrimPrefix(container.Names[0], "/")
-		//vk_default хард-кодим, она автоматом создается, рутпроекта_дефолт*
-		networks, err := cli.NetworkInspect(ctx, "vk_default", network.InspectOptions{})
-		if err != nil {
-			fmt.Printf("Failed to inspect network for container %s: %v\n", containerName, err)
-			continue
-		}
-		found := false
-		for _, network := range networks.Containers {
-			if network.Name == containerName {
-				ipAddress := network.IPv4Address
-				if ipAddress == "" {
-					fmt.Printf("No IP address found for container %s\n", containerName)
-					continue
-				}
-				// Убираем сaбнет маску
-				ipParts := strings.Split(ipAddress, "/")
-				if len(ipParts) == 0 {
-					fmt.Printf("Invalid IP address format for container %s: %s\n", containerName, ipAddress)
-					continue
-				}
-				ipAddress = ipParts[0]
-				// Раскидываем порты
-				port := ""
-				switch containerName {
-				case "vk_api_1":
-					port = "8080"
-				case "vk_app_1":
-					port = "8081"
-				default:
-					fmt.Printf("Unknown service: %s\n", containerName)
-					continue
-				}
-				// URL
-				url := fmt.Sprintf("http://%s:%s", ipAddress, port)
-
-				// Для дебага
-				fmt.Printf("Нашли: %s at:  %s\n", containerName, url)
-				services = append(services, struct {
-					URL         string
-					ServiceName string
-				}{
-					URL:         url,
-					ServiceName: containerName,
-				})
-				found = true
-			}
-		}
-		if !found {
-			fmt.Printf("Container %s not found in your network\n", containerName)
-		}
-	}
-
-	return services, nil
-}
-
-func pingAllServices(apiURL string) {
-	services, err := discoverContainers()
-	if err != nil {
-		fmt.Printf("Failed to discover containers: %v\n", err)
+		log.Printf("Failed to discover containers: %v\n", err)
 		return
 	}
 
-	for _, service := range services {
-		result := ping(service.URL, service.ServiceName)
+	servicesToPing := []string{"api", "app", "postgres"}
 
-		sendPingResult(apiURL, result)
+	for _, container := range containers {
+		for _, service := range servicesToPing {
+			mutex.Lock()
+			key := fmt.Sprintf("%s-%s", container.ID, service)
+			if pingedContainers[key] {
+				mutex.Unlock()
+				continue
+			}
+			pingedContainers[key] = true
+			mutex.Unlock()
+
+			result := pingService(container.ID, service)
+			result.ContainerName = container.Name
+			sendPingResult(apiURL, result)
+		}
 	}
 }
 
 func main() {
 	apiURL := "http://api:8080/ping_results"
-	// Цикл бесконечного пинга
+
+	pingedContainers := make(map[string]bool)
+	mutex := &sync.Mutex{}
+
 	for {
-		// result := ping("http://api:8080", "api")
-		// fmt.Printf("Ping result: %+v\n", result)
 		fmt.Println("Starting ping cycle...")
-		pingAllServices(apiURL)
-		fmt.Println("Ping cycle completed. Waiting for 5 seconds before next cycle.")
+		pingAllContainers(apiURL, pingedContainers, mutex)
+
+		mutex.Lock()
+		for key := range pingedContainers {
+			delete(pingedContainers, key)
+		}
+		mutex.Unlock()
+
+		fmt.Println("Ping cycle completed. Waiting for 10 seconds before next cycle.")
 		time.Sleep(10 * time.Second)
 	}
 }
