@@ -164,7 +164,6 @@ func pingAllContainers(apiURL string) {
 	}
 
 	for _, container := range containers {
-		time.Sleep(5 * time.Second)
 		result = pingService(container.ID)
 		sendPingResult(apiURL, result)
 	}
@@ -175,8 +174,7 @@ func main() {
 
 	for {
 		fmt.Println("Начинаю пинг...")
-		time.Sleep(5 * time.Second)
+		time.Sleep(7 * time.Second)
 		pingAllContainers(apiURL)
-		time.Sleep(5 * time.Second)
 	}
 }
