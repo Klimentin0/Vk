@@ -24,11 +24,20 @@ cd Vk
 ```
 И запускаем проект
 ```
-docker compose up
+docker compose up --build
 
+```
+Возможно нужны привилегии прм запуске
+```
+sudo docker compose up --build
 ```
 Отображение в браузере происходит на:
 > http://localhost:3000/
+
+Для завершения
+```
+sudo docker compose down
+```
 ## Краткое описание
 ### Pinger
 Пингер использует докеровский пакет (github.com/docker/docker/client), чтобы получить список активных контейнеров в сети vk_default(докер копоус создаёт её по дефолту в режиме моста).
