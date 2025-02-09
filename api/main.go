@@ -15,10 +15,11 @@ import (
 var db *sql.DB
 
 type PingResult struct {
-	ContainerID   string  `json:"container_id"`
-	ContainerName string  `json:"container_name"`
-	PingDuration  float64 `json:"ping_duration"`
-	Status        string  `json:"status"`
+	ContainerID   string    `json:"container_id"`
+	ContainerName string    `json:"container_name"`
+	PingDuration  float64   `json:"ping_duration"`
+	Status        string    `json:"status"`
+	Timestamp     time.Time `json:"timestamp"`
 }
 
 // Инициализируемв в API жц базу данных
@@ -104,8 +105,7 @@ func getPingResults(w http.ResponseWriter, r *http.Request) {
 	var results []PingResult
 	for rows.Next() {
 		var result PingResult
-		var timestamp time.Time
-		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &timestamp)
+		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &result.Timestamp)
 		if err != nil {
 			http.Error(w, "Error scanning ping results", http.StatusInternalServerError)
 			return
@@ -118,19 +118,65 @@ func getPingResults(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(results)
 }
 
+func getLatestUPPerContainer(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+        SELECT DISTINCT ON (container_name) container_id, container_name, ping_duration, status, timestamp
+        FROM ping_results
+        WHERE status = 'UP'
+        ORDER BY container_name, timestamp DESC
+    `)
+	if err != nil {
+		http.Error(w, "Error fetching latest UP results per container", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var results []PingResult
+	for rows.Next() {
+		var result PingResult
+		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &result.Timestamp)
+		if err != nil {
+			http.Error(w, "Error scanning latest UP results per container", http.StatusInternalServerError)
+			return
+		}
+		results = append(results, result)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+// Нужно разобраться с CORS
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			return // preflight requests
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	initDB()
 	defer db.Close()
+
+	mux := http.NewServeMux()
+
 	//Раутинг
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Placeholder")
 	})
-	http.HandleFunc("/ping-results", handlePingResults)
-	http.HandleFunc("/ping-results/all", getPingResults)
+	mux.HandleFunc("/ping-results", handlePingResults)
+	mux.HandleFunc("/ping-results/all", getPingResults)
+	mux.HandleFunc("/ping-results/latest-up-per-container", getLatestUPPerContainer)
+
+	handler := corsMiddleware(mux)
 	//Старт сервера
 	fmt.Println("API is running on port 8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", handler))
 }
-
-// Просто команда для линукса чтобы быстро проверять постгрес
-// psql -h localhost -p 5432 -U postgres -d status-check-db

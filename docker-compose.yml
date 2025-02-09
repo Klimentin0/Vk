@@ -24,6 +24,14 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock 
     privileged: true 
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    environment:
+      - REACT_APP_API_URL=http://api:8080
   db:
     image: postgres:17.2
     container_name: postgres_container
