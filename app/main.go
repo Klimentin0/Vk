@@ -29,7 +29,7 @@ func getCurrentContainerID() string {
 	return os.Getenv("HOSTNAME")
 }
 
-// ID всех остальных контейнеров в vk_default сетке.
+// ID всех контейнеров в vk_default сетке.
 func discoverContainers() ([]struct {
 	ID string
 }, error) {
@@ -105,16 +105,43 @@ func pingService(containerID string) PingResult {
 }
 
 func sendPingResult(apiURL string, result PingResult) {
-	jsonData, _ := json.Marshal(result)
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	//  JSON
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		fmt.Printf("Failed to serialize ping result for %s: %v\n", result.ContainerID, err)
+		return
+	}
+
+	//  HTTP клиент с таймаутом
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	// создаём HTTP POST req
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("Failed to create HTTP request for %s: %v\n", result.ContainerID, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Отправка запроса
+	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("Failed to send ping result for %s: %v\n", result.ContainerID, err)
 		return
 	}
 	defer resp.Body.Close()
-	fmt.Printf("Sent ping result for %s: ID(%s)\n %s\n with duration: %f\n", result.ContainerName, result.ContainerID, result.Status, result.PingDuration)
-}
 
+	// Проверяем код
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Printf("API returned non-2xx status code: %d for container %s\n", resp.StatusCode, result.ContainerID)
+		return
+	}
+
+	// Логиирование для проверки
+	fmt.Printf("Sent ping result for %s: ID(%s)\n Status: %s\n with duration: %f\n", result.ContainerName, result.ContainerID, result.Status, result.PingDuration)
+}
 func pingAllContainers(apiURL string) {
 	var result PingResult
 	containers, err := discoverContainers()
@@ -130,7 +157,7 @@ func pingAllContainers(apiURL string) {
 }
 
 func main() {
-	apiURL := "http://api:8080/ping_results"
+	apiURL := "http://api:8080/ping-results"
 
 	for {
 		fmt.Println("Начинаю пинг...")

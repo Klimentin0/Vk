@@ -15,13 +15,13 @@ import (
 var db *sql.DB
 
 type PingResult struct {
-	Service            string    `json:"service"`
-	IPAddress          string    `json:"ip_address"`
-	PingDuration       float64   `json:"ping_duration"`
-	Status             string    `json:"status"`
-	LastSuccessfulPing time.Time `json:"last_successful_ping"`
+	ContainerID   string  `json:"container_id"`
+	ContainerName string  `json:"container_name"`
+	PingDuration  float64 `json:"ping_duration"`
+	Status        string  `json:"status"`
 }
 
+// Инициализируемв в API жц базу данных
 func initDB() {
 	var err error
 	connStr := fmt.Sprintf(
@@ -30,23 +30,25 @@ func initDB() {
 		os.Getenv("POSTGRES_PORT"),
 		os.Getenv("POSTGRES_USER"),
 		os.Getenv("POSTGRES_PASSWORD"),
-		os.Getenv("POSTGRES_DB"))
+		os.Getenv("POSTGRES_DB"),
+	)
 	log.Println("Connecting to DB with:", connStr)
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Создаём таблицу, проверяем нет ли уже существующей.
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS ping_results (
-		id SERIAL PRIMARY KEY,
-		service TEXT,
-		ip_address TEXT,
-		ping_duration DOUBLE PRECISION,
-		status TEXT,
-		last_successful_ping TIMESTAMP
-	)`)
+        id SERIAL PRIMARY KEY,
+        container_id TEXT,
+        container_name TEXT,
+        ping_duration DOUBLE PRECISION,
+        status TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`)
 	if err != nil {
-		log.Fatalf("Ошибка создания дб", err)
+		log.Fatalf("Error creating table: %v", err)
 	}
 
 	err = db.Ping()
@@ -55,25 +57,28 @@ func initDB() {
 	}
 	log.Println("Database initialized successfully.")
 }
+
+// Отправлем результат пинга в бд
 func savePingResult(result PingResult) {
 	_, err := db.Exec(
-		"INSERT INTO ping_results (service, ip_address, ping_duration, status, last_successful_ping) VALUES ($1, $2, $3, $4, $5)",
-		result.Service, result.IPAddress, result.PingDuration, result.Status, result.LastSuccessfulPing,
+		"INSERT INTO ping_results (container_id, container_name, ping_duration, status) VALUES ($1, $2, $3, $4)",
+		result.ContainerID, result.ContainerName, result.PingDuration, result.Status,
 	)
 	if err != nil {
-		log.Printf("Error saving ping result for service %s: %v", result.Service, err)
+		log.Printf("Error saving ping result for container %s: %v", result.ContainerID, err)
 	} else {
-		log.Printf("Saved ping result for service %s", result.Service)
+		log.Printf("Saved ping result for container %s", result.ContainerID)
 	}
-
 }
 
+// Принимаем POST от Пингера
 func handlePingResults(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Декодим JSON
 	var result PingResult
 	err := json.NewDecoder(r.Body).Decode(&result)
 	if err != nil {
@@ -82,21 +87,25 @@ func handlePingResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	savePingResult(result)
-	fmt.Fprintf(w, "Ping result saved: %s - %s\n", result.Service, result.Status)
+
+	fmt.Fprintf(w, "Ping result saved: %s - %s\n", result.ContainerID, result.Status)
 }
 
+// Для запроса от фронта
 func getPingResults(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT service, ip_address, ping_duration, status, last_successful_ping FROM ping_results ORDER BY last_successful_ping DESC")
+	rows, err := db.Query("SELECT container_id, container_name, ping_duration, status, timestamp FROM ping_results ORDER BY timestamp DESC")
 	if err != nil {
 		http.Error(w, "Error fetching ping results", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
+	// Парсим в слайс []PingResult ответ
 	var results []PingResult
 	for rows.Next() {
 		var result PingResult
-		err := rows.Scan(&result.Service, &result.IPAddress, &result.PingDuration, &result.Status, &result.LastSuccessfulPing)
+		var timestamp time.Time
+		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &timestamp)
 		if err != nil {
 			http.Error(w, "Error scanning ping results", http.StatusInternalServerError)
 			return
@@ -104,6 +113,7 @@ func getPingResults(w http.ResponseWriter, r *http.Request) {
 		results = append(results, result)
 	}
 
+	// Возвращаем фронту JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
 }
@@ -111,15 +121,16 @@ func getPingResults(w http.ResponseWriter, r *http.Request) {
 func main() {
 	initDB()
 	defer db.Close()
+	//Раутинг
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "заглушка")
-
+		fmt.Fprint(w, "Placeholder")
 	})
 	http.HandleFunc("/ping-results", handlePingResults)
 	http.HandleFunc("/ping-results/all", getPingResults)
-
+	//Старт сервера
 	fmt.Println("API is running on port 8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+// Просто команда для линукса чтобы быстро проверять постгрес
 // psql -h localhost -p 5432 -U postgres -d status-check-db
