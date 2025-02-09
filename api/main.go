@@ -19,6 +19,7 @@ type PingResult struct {
 	ContainerName string    `json:"container_name"`
 	PingDuration  float64   `json:"ping_duration"`
 	Status        string    `json:"status"`
+	IPAddress     string    `json:"ip_address"`
 	Timestamp     time.Time `json:"timestamp"`
 }
 
@@ -46,6 +47,7 @@ func initDB() {
         container_name TEXT,
         ping_duration DOUBLE PRECISION,
         status TEXT,
+		ip_address TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`)
 	if err != nil {
@@ -62,8 +64,8 @@ func initDB() {
 // Отправлем результат пинга в бд
 func savePingResult(result PingResult) {
 	_, err := db.Exec(
-		"INSERT INTO ping_results (container_id, container_name, ping_duration, status) VALUES ($1, $2, $3, $4)",
-		result.ContainerID, result.ContainerName, result.PingDuration, result.Status,
+		"INSERT INTO ping_results (container_id, container_name, ping_duration, status, ip_address) VALUES ($1, $2, $3, $4, $5)",
+		result.ContainerID, result.ContainerName, result.PingDuration, result.Status, result.IPAddress,
 	)
 	if err != nil {
 		log.Printf("Error saving ping result for container %s: %v", result.ContainerID, err)
@@ -94,7 +96,7 @@ func handlePingResults(w http.ResponseWriter, r *http.Request) {
 
 // Для запроса от фронта
 func getPingResults(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT container_id, container_name, ping_duration, status, timestamp FROM ping_results ORDER BY timestamp DESC")
+	rows, err := db.Query("SELECT container_id, container_name, ping_duration, status, ip_address, timestamp FROM ping_results ORDER BY timestamp DESC")
 	if err != nil {
 		http.Error(w, "Error fetching ping results", http.StatusInternalServerError)
 		return
@@ -105,7 +107,7 @@ func getPingResults(w http.ResponseWriter, r *http.Request) {
 	var results []PingResult
 	for rows.Next() {
 		var result PingResult
-		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &result.Timestamp)
+		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &result.IPAddress, &result.Timestamp)
 		if err != nil {
 			http.Error(w, "Error scanning ping results", http.StatusInternalServerError)
 			return
@@ -120,7 +122,7 @@ func getPingResults(w http.ResponseWriter, r *http.Request) {
 
 func getLatestUPPerContainer(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-        SELECT DISTINCT ON (container_name) container_id, container_name, ping_duration, status, timestamp
+        SELECT DISTINCT ON (container_name) container_id, container_name, ping_duration, status, ip_address, timestamp
         FROM ping_results
         WHERE status = 'UP'
         ORDER BY container_name, timestamp DESC
@@ -134,7 +136,7 @@ func getLatestUPPerContainer(w http.ResponseWriter, r *http.Request) {
 	var results []PingResult
 	for rows.Next() {
 		var result PingResult
-		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &result.Timestamp)
+		err := rows.Scan(&result.ContainerID, &result.ContainerName, &result.PingDuration, &result.Status, &result.IPAddress, &result.Timestamp)
 		if err != nil {
 			http.Error(w, "Error scanning latest UP results per container", http.StatusInternalServerError)
 			return

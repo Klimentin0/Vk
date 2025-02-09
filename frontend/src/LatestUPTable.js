@@ -47,9 +47,10 @@ const LatestUPTable = () => {
       >
         <thead>
           <tr>
-            <th>Container Name</th>
-            <th>Ping Duration (s)</th>
-            <th>Timestamp</th>
+            <th>Имя контейнера</th>
+            <th>Время отклика</th>
+            <th>IP</th>
+            <th>Дата пинга</th>
           </tr>
         </thead>
         <tbody>
@@ -62,6 +63,7 @@ const LatestUPTable = () => {
                 <tr key={index}>
                   <td>{result.container_name}</td>
                   <td>{result.ping_duration.toFixed(3)}</td>
+                  <td>{result.ip_address || "N/A"}</td>
                   <td>{timestamp}</td>
                 </tr>
               );

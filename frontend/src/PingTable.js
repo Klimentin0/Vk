@@ -26,11 +26,12 @@ const PingTable = ({ pingResults }) => {
       >
         <thead>
           <tr>
-            <th>Container ID</th>
-            <th>Container Name</th>
-            <th>Ping Duration (s)</th>
-            <th>Status</th>
-            <th>Timestamp</th>
+            <th>ID контейнера</th>
+            <th>Имя контейнера</th>
+            <th>Время отклика</th>
+            <th>Статус</th>
+            <th>IP</th>
+            <th>Дата пинга</th>
           </tr>
         </thead>
         <tbody>
@@ -51,6 +52,7 @@ const PingTable = ({ pingResults }) => {
                 <td style={{ color: result.status === "UP" ? "green" : "red" }}>
                   {result.status}
                 </td>
+                <td>{result.ip_address || "N/A"}</td>
                 <td>{timestamp}</td>
               </tr>
             );

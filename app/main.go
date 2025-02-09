@@ -22,6 +22,7 @@ type PingResult struct {
 	ContainerName string  `json:"container_name"`
 	PingDuration  float64 `json:"ping_duration"`
 	Status        string  `json:"status"`
+	IPAddress     string  `json:"ip_address"`
 }
 
 // ID этого контейнера
@@ -76,6 +77,7 @@ func pingService(containerID string) PingResult {
 		ContainerID:   containerID,
 		PingDuration:  0,
 		Status:        "DOWN",
+		IPAddress:     "N/A",
 	}
 
 	// Получаем имя контейнера
@@ -89,7 +91,18 @@ func pingService(containerID string) PingResult {
 		containerName = strings.TrimPrefix(containerName, "/") // Убираем слэши
 		result.ContainerName = containerName
 	}
-
+	// Get the container's IP address
+	cmd3 := exec.Command("docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID)
+	ipOutput, err := cmd3.Output()
+	if err != nil {
+		log.Printf("Failed to get IP address for container %s: %v", containerID, err)
+	} else {
+		// Trim the IP address
+		ipAddress := strings.TrimSpace(string(ipOutput))
+		if ipAddress != "" {
+			result.IPAddress = ipAddress
+		}
+	}
 	//Пингуем
 	startTime := time.Now()
 	cmd := exec.Command("docker", "exec", thisID, "ping", "-c", "1", containerID)
