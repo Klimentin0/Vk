@@ -35,9 +35,30 @@ func initDB() {
 		os.Getenv("POSTGRES_DB"),
 	)
 	log.Println("Connecting to DB with:", connStr)
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatal(err)
+	// НАДО ДАТЬ ВРЕМЯ ПРИ ПЕРВОМ ЗАПУСКЕ инициализироваться дб-шке
+	maxRetries := 10
+	retryDelay := 5 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		db, err = sql.Open("postgres", connStr)
+		if err != nil {
+			log.Printf("Attempt %d: Failed to open database connection: %v", i+1, err)
+		} else {
+			// Тестируем коннект
+			err = db.Ping()
+			if err == nil {
+				log.Println("Database connection established successfully.")
+				break
+			}
+			log.Printf("Attempt %d: Database ping failed: %v", i+1, err)
+		}
+
+		if i == maxRetries-1 {
+			log.Fatalf("Failed to connect to the database after %d attempts", maxRetries)
+		}
+
+		log.Printf("Retrying in %v...", retryDelay)
+		time.Sleep(retryDelay)
 	}
 
 	// Создаём таблицу, проверяем нет ли уже существующей.

@@ -164,6 +164,7 @@ func pingAllContainers(apiURL string) {
 	}
 
 	for _, container := range containers {
+		time.Sleep(5 * time.Second)
 		result = pingService(container.ID)
 		sendPingResult(apiURL, result)
 	}
@@ -173,7 +174,6 @@ func main() {
 	apiURL := "http://api:8080/ping-results"
 
 	for {
-		time.Sleep(10 * time.Second)
 		fmt.Println("Начинаю пинг...")
 		time.Sleep(5 * time.Second)
 		pingAllContainers(apiURL)
