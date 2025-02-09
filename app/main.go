@@ -31,8 +31,7 @@ func getCurrentContainerID() string {
 
 // ID всех остальных контейнеров в vk_default сетке.
 func discoverContainers() ([]struct {
-	ID   string
-	Name string
+	ID string
 }, error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -54,20 +53,16 @@ func discoverContainers() ([]struct {
 	}
 
 	var containerList []struct {
-		ID   string
-		Name string
+		ID string
 	}
 	for _, container := range containers {
 		containerID := container.ID
 		// ТОЛЬКО ПЕРВЫЕ 12 символов айди контейнра позволяют отправить пингу
 		shortID := containerID[:12]
-		containerName := strings.TrimPrefix(container.Names[0], "/")
 		containerList = append(containerList, struct {
-			ID   string
-			Name string
+			ID string
 		}{
-			ID:   shortID,
-			Name: containerName,
+			ID: shortID,
 		})
 	}
 	return containerList, nil
@@ -75,17 +70,32 @@ func discoverContainers() ([]struct {
 
 // пинг через доекровские cli команды
 func pingService(containerID string) PingResult {
-	startTime := time.Now()
 	thisID := getCurrentContainerID()
-
-	cmd := exec.Command("docker", "exec", thisID, "ping", "-c", "1", containerID)
-	err := cmd.Run()
-	duration := time.Since(startTime).Seconds()
 	result := PingResult{
-		ContainerID:  containerID,
-		PingDuration: duration,
-		Status:       "DOWN",
+		ContainerName: "unknown",
+		ContainerID:   containerID,
+		PingDuration:  0,
+		Status:        "DOWN",
 	}
+
+	// Получаем имя контейнера
+	cmd2 := exec.Command("docker", "inspect", "--format", "{{.Name}}", containerID)
+	output, err := cmd2.Output()
+	if err != nil {
+		log.Printf("Failed to inspect container %s: %v", containerID, err)
+	} else {
+		// Причёсываем имя
+		containerName := strings.TrimSpace(string(output))
+		containerName = strings.TrimPrefix(containerName, "/") // Убираем слэши
+		result.ContainerName = containerName
+	}
+
+	//Пингуем
+	startTime := time.Now()
+	cmd := exec.Command("docker", "exec", thisID, "ping", "-c", "1", containerID)
+	err = cmd.Run()
+	duration := time.Since(startTime).Seconds()
+	result.PingDuration = duration
 	if err != nil {
 		log.Printf("Error pinging container %s: %v", containerID, err)
 		return result
@@ -102,7 +112,7 @@ func sendPingResult(apiURL string, result PingResult) {
 		return
 	}
 	defer resp.Body.Close()
-	fmt.Printf("Sent ping result for %s: ID(%s)\n %s\n", result.ContainerName, result.ContainerID, result.Status)
+	fmt.Printf("Sent ping result for %s: ID(%s)\n %s\n with duration: %f\n", result.ContainerName, result.ContainerID, result.Status, result.PingDuration)
 }
 
 func pingAllContainers(apiURL string) {
