@@ -160,8 +160,9 @@ func main() {
 	apiURL := "http://api:8080/ping-results"
 
 	for {
-		fmt.Println("Начинаю пинг...")
 		time.Sleep(10 * time.Second)
+		fmt.Println("Начинаю пинг...")
+		time.Sleep(5 * time.Second)
 		pingAllContainers(apiURL)
 		time.Sleep(5 * time.Second)
 	}
