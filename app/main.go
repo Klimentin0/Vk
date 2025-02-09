@@ -59,6 +59,7 @@ func discoverContainers() ([]struct {
 	}
 	for _, container := range containers {
 		containerID := container.ID
+		// ТОЛЬКО ПЕРВЫЕ 12 символов айди контейнра позволяют отправить пингу
 		shortID := containerID[:12]
 		containerName := strings.TrimPrefix(container.Names[0], "/")
 		containerList = append(containerList, struct {
